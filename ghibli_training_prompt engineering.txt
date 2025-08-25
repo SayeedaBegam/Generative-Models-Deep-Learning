@@ -1,0 +1,114 @@
+Using a single prompt like
+`"a busy market, in <sks> style"` will train the LoRA to associate **“market”** with your style token. You’ll get a model that’s great at markets—but less general elsewhere. To make `<sks>` a **general Ghibli‑style trigger**, vary the text conditioning during training.
+
+## What to change
+
+1. **Diversify prompts per image (subject/scene/lighting/composition).**
+   Keep `<sks>` constant, vary everything else so the model learns “this token = style,” not “this token + market.”
+
+2. **Keep a “class word” near the token.**
+   E.g., `"<sks> style illustration"`, `"<sks> style anime artwork"`, `"<sks> cel‑shaded background"`. This helps steer the embedding toward style features.
+
+3. **Use prompt dropout (\~10%).**
+   Occasionally train with an empty prompt so the UNet gets a tiny unconditional signal; this makes CFG work better at inference.
+
+4. **If you’re training the text encoder LoRA too:** don’t overfit it—use modest rank (r=8), dropout 0.1, and varied prompts.
+
+---
+
+## Drop‑in prompt randomizer (replace your fixed prompt)
+
+Here’s a simple generator you can plug into your dataset/collate to produce a **different prompt each batch** while always including `<sks>`:
+
+```python
+import random
+
+INSTANCE_TOKEN = "<sks>"
+
+subjects = [
+    "a busy market", "a forest path", "a seaside village", "a steam-powered workshop",
+    "a grassy hill with wildflowers", "a small kitchen", "a flying machine over clouds",
+    "a quiet library", "a mountain valley", "a river with stepping stones"
+]
+
+styles = [
+    f"in {INSTANCE_TOKEN} style", f"{INSTANCE_TOKEN} style illustration",
+    f"{INSTANCE_TOKEN} inspired artwork", f"{INSTANCE_TOKEN} cel-shaded art",
+    f"{INSTANCE_TOKEN} watercolor look"
+]
+
+lighting = [
+    "at golden hour", "on an overcast day", "at dusk with warm lanterns",
+    "in soft morning light", "under moonlight"
+]
+
+compositions = [
+    "wide shot", "medium shot", "low angle", "overhead view", "cinematic framing",
+    "rule of thirds composition"
+]
+
+extras = [
+    "soft color palette", "hand-painted textures", "gentle linework",
+    "simple shapes", "whimsical mood", "calm atmosphere"
+]
+
+def make_prompt(dropout_prob=0.10):
+    # 10% unconditional (prompt dropout)
+    if random.random() < dropout_prob:
+        return ""
+    s  = random.choice(subjects)
+    st = random.choice(styles)
+    li = random.choice(lighting)
+    co = random.choice(compositions)
+    ex = ", ".join(random.sample(extras, k=2))
+    return f"{s}, {st}, {li}, {co}, {ex}"
+```
+
+### Wire it into your dataloader
+
+Replace your fixed `prompt` usage with this:
+
+```python
+class ImageOnlyDataset(Dataset):
+    def __init__(self, image_dir: str, resolution: int = 512):
+        # ... your existing code ...
+        self.prompt_fn = make_prompt  # inject generator
+
+    def __getitem__(self, idx):
+        # ... your existing image code ...
+        return {'pixel_values': px, 'prompt': self.prompt_fn()}
+
+def collate(batch):
+    pixel_values = torch.stack([b['pixel_values'] for b in batch])
+    prompts = [b['prompt'] for b in batch]
+    return {'pixel_values': pixel_values, 'prompts': prompts}
+```
+
+That’s it—now every sample (or at least every batch) carries a different, generic scene description with the **same** style trigger `<sks>`.
+
+---
+
+## Small training tips specific to “style token” LoRAs
+
+* **Text encoder LoRA:** keep `lora_dropout=0.1`, `r=8`, `alpha=16`. If you also initialized a new token embedding row, you can optionally let **only that row** learn (plus the LoRA) to keep the rest of CLIP stable.
+* **UNet LoRA:** target attention projections only (`to_q/k/v`, `to_out.0`) for stability.
+* **Batch captions:** If you have image‑level captions (BLIP, etc.), you can combine them with the template:
+  `f"{caption}, in {INSTANCE_TOKEN} style, soft color palette, gentle linework"`
+  This increases subject diversity further.
+* **CFG during eval:** keep it modest (≈5–6) to preserve Ghibli’s soft palette.
+* **Schedulers:** Euler (smooth/painterly) or DPM‑Solver++ 2M (fast, clean at low steps) are good starting points.
+
+---
+
+## Quick A/B test idea
+
+* Train one epoch with your **old fixed prompt** and save adapters → `old/`.
+* Train one epoch with the **randomized prompts** above → `new/`.
+* Load each adapter set in turn and generate with the same seeds:
+
+  * “a castle on a cliff, in `<sks>` style”
+  * “a cat on a train seat, in `<sks>` style”
+  * “a forest spirit at night, in `<sks>` style”
+* You should see the **new** one generalize much better beyond “market”.
+
+If you want, I can tweak the prompt pools to focus more on **background paintings** vs **character shots**, depending on what your dataset emphasizes.
