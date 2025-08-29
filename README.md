@@ -105,8 +105,10 @@ python code/test_token.py
 ```
 ---
 
-## Next Steps
-
+## Inference
+- Open `eval_lora.py` and give different `seeds` (line 64) value
+- Run `eval_lora.py`
+- This will generate samples images based on the seed values
 
 ---
 
