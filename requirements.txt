@@ -1,12 +1,10 @@
-torch            # replace with: torch==2.3.0+cu121  (if you have CUDA 12.1)  
-torchvision      
-torchaudio       
-
-transformers>=4.40.0
-diffusers>=0.30.0
-accelerate>=0.30.0
-peft>=0.11.1
-safetensors
-huggingface_hub
-Pillow
-datasets
+torch==2.0.1
+torchvision==0.15.2
+diffusers==0.17.0
+transformers==4.30.2
+peft==0.5.0
+safetensors==0.6.2
+accelerate==0.25.0
+tqdm==4.67.1
+Pillow==11.3.0
+numpy==1.26.4
